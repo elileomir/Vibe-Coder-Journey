@@ -8,6 +8,7 @@ import {
   getModules,
   getUserProgress,
   getOrCreateUser,
+  advanceUserModule,
   type VibeUser,
   type VibeModule,
   type UserProgress,
@@ -43,21 +44,37 @@ export default function DashboardPage() {
 
     getOrCreateUser(cached.email)
       .then(async (freshUser) => {
-        setUser(freshUser);
-        localStorage.setItem("vibe_user", JSON.stringify(freshUser));
-        window.dispatchEvent(new Event("vibe_auth_change"));
-
         const [mods, prog] = await Promise.all([
           getModules(),
           getUserProgress(freshUser.id),
         ]);
+
+        /* ── Catch-up: advance module if user completed modules before
+         *    the auto-advance code was deployed (or any race condition) ── */
+        let advanced = false;
+        let safetyCounter = 0;
+        while (safetyCounter < 10) {
+          const didAdvance = await advanceUserModule(freshUser.id);
+          if (!didAdvance) break;
+          advanced = true;
+          safetyCounter++;
+        }
+        /* If we advanced, re-fetch the user record for the new current_module */
+        const finalUser = advanced
+          ? await getOrCreateUser(cached.email)
+          : freshUser;
+
+        setUser(finalUser);
+        localStorage.setItem("vibe_user", JSON.stringify(finalUser));
+        window.dispatchEvent(new Event("vibe_auth_change"));
+
         setModules(mods);
         setProgress(prog);
         setLoading(false);
 
         /* ── Auto-check achievements on dashboard load ── */
-        checkXPAchievements(freshUser.total_xp);
-        checkStreakAchievements(freshUser.streak_days);
+        checkXPAchievements(finalUser.total_xp);
+        checkStreakAchievements(finalUser.streak_days);
       })
       .catch(() => setLoading(false));
   }, [router]);
